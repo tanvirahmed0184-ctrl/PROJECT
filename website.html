@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Entertainify — Demo (Multi-page)</title>
+
+  <!-- Tailwind CDN (quick dev) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Font Awesome for icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"/>
+
+  <style>
+    /* Shared visual helpers */
+    .glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.06); }
+    .accent { background: linear-gradient(90deg,#7c3aed,#ec4899); color: white; }
+    .focus-ring:focus { outline: 2px solid rgba(99,102,241,0.6); outline-offset: 2px; border-radius: 8px; }
+    @keyframes fadeInUp { from { opacity: 0; transform: translateY(14px);} to { opacity: 1; transform: translateY(0);} }
+    .anim-fade-up { animation: fadeInUp 420ms ease both; }
+    @keyframes floaty { 0% { transform: translateY(0);} 50% { transform: translateY(-6px);} 100% { transform: translateY(0);} }
+    .floaty { animation: floaty 6s ease-in-out infinite; }
+    .snap-x { scroll-snap-type: x mandatory; } .snap-start { scroll-snap-align: start; }
+    .parallax-hero { position: relative; overflow: hidden; height: 520px; }
+    .parallax-layer { position: absolute; left: 0; right: 0; top: 0; bottom: 0; background-position: center; background-size: cover; will-change: transform; pointer-events: none; }
+    .back-top { position: fixed; right: 20px; bottom: 24px; z-index: 60; }
+    .tooltip { position: relative; }
+    .tooltip:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); color: #fff; padding: 6px 8px; font-size: 12px; border-radius: 6px; white-space: nowrap; }
+    @media (max-width: 768px) { .parallax-hero { height: 420px; } }
+
+    /* page transitions */
+    .page { opacity: 0; transform: translateY(6px); transition: all 300ms ease; }
+    .page.show { opacity: 1; transform: translateY(0); }
+
+    /* Header tweaks */
+    .nav-glow:hover { box-shadow: 0 6px 20px rgba(124,58,237,0.14), 0 2px 6px rgba(236,72,153,0.06); transform: translateY(-2px); }
+    .brand-icon { width:36px; height:36px; border-radius:8px; background: linear-gradient(135deg,#111827,#0f172a); display:inline-flex; align-items:center; justify-content:center; box-shadow: 0 2px 10px rgba(0,0,0,0.6); }
+    .footer-link:hover { color: #fff; text-decoration: underline; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-b from-slate-900 via-gray-900 to-black text-gray-100 font-sans">
+
+  <div id="root"></div>
+
+  <!-- React + ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-presets="react">
+  const { useState, useEffect, useRef } = React;
+
+  // API base (backend from earlier). Frontend will try to use it; if not available it falls back.
+  const API_BASE = 'http://localhost:4000';
+
+  async function callApi(path, opts = {}) {
+    const token = localStorage.getItem('ent_token');
+    const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    try {
+      const res = await fetch(API_BASE + path, { ...opts, headers, credentials: 'include' });
+      const json = await res.json();
+      return json;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function Router({ route, navigate, children }) {
+    return children(route, navigate);
+  }
+
+  function AppRoot() {
+    const [route, setRoute] = useState(window.location.hash.replace('#','') || '/');
+    const [user, setUser] = useState(() => { try { return JSON.parse(localStorage.getItem('ent_user')); } catch { return null; } });
+    const [token, setToken] = useState(localStorage.getItem('ent_token') || null);
+
+    useEffect(() => {
+      function onHash() { setRoute(window.location.hash.replace('#','') || '/'); }
+      window.addEventListener('hashchange', onHash);
+      return () => window.removeEventListener('hashchange', onHash);
+    }, []);
+
+    useEffect(() => {
+      async function validate() {
+        if (!token) return;
+        const res = await callApi('/api/me');
+        if (res && res.user) {
+          setUser(res.user);
+          localStorage.setItem('ent_user', JSON.stringify(res.user));
+        } else {
+          const localUser = localStorage.getItem('ent_user');
+          if (!localUser) { localStorage.removeItem('ent_token'); setToken(null); setUser(null); }
+        }
+      }
+      validate();
+    }, []);
+
+    function navigate(to) { window.location.hash = to; setRoute(to); }
+
+    async function login(username, password) {
+      const res = await callApi('/api/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+      if (res && res.token) {
+        localStorage.setItem('ent_token', res.token);
+        localStorage.setItem('ent_user', JSON.stringify(res.user));
+        setToken(res.token);
+        setUser(res.user);
+        navigate('/');
+        return { ok: true };
+      }
+      const demo = { admin: { username:'admin', password:'adminpass', role:'admin' }, demo: { username:'demo', password:'userpass', role:'user' } };
+      const found = Object.values(demo).find(u => u.username === username && u.password === password);
+      if (found) {
+        const fakeToken = 'local-demo-token';
+        const userObj = { username: found.username, role: found.role, id: found.username === 'admin' ? 1 : 2 };
+        localStorage.setItem('ent_token', fakeToken);
+        localStorage.setItem('ent_user', JSON.stringify(userObj));
+        setToken(fakeToken);
+        setUser(userObj);
+        navigate('/');
+        return { ok: true, demo: true };
+      }
+      return { ok: false, error: 'Invalid credentials' };
+    }
+
+    async function register(username, password) {
+      const res = await callApi('/api/register', { method:'POST', body: JSON.stringify({ username, password }) });
+      if (res && res.token) {
+        localStorage.setItem('ent_token', res.token);
+        localStorage.setItem('ent_user', JSON.stringify(res.user));
+        setToken(res.token);
+        setUser(res.user);
+        navigate('/');
+        return { ok: true };
+      }
+      const userObj = { username, role: 'user', id: Date.now() };
+      const fakeToken = 'local-demo-' + Date.now();
+      localStorage.setItem('ent_token', fakeToken);
+      localStorage.setItem('ent_user', JSON.stringify(userObj));
+      setToken(fakeToken);
+      setUser(userObj);
+      navigate('/');
+      return { ok: true, demo: true };
+    }
+
+    function logout() {
+      localStorage.removeItem('ent_token');
+      localStorage.removeItem('ent_user');
+      setToken(null);
+      setUser(null);
+      navigate('/');
+    }
+
+    return (
+      <Router route={route} navigate={navigate}>
+        {(r, nav) => (
+          <div>
+            <AppShell route={r} navigate={nav} user={user} onLogout={logout}>
+              {r === '/' && <HomePage user={user} />}
+              {r === '/login' && <LoginPage onLogin={login} onRegister={register} navigate={nav} />}
+              {r === '/premium' && <PremiumPage user={user} />}
+              {r === '/account' && <AccountPage user={user} />}
+            </AppShell>
+          </div>
+        )}
+      </Router>
+    );
+  }
+
+  function AppShell({ children, route, navigate, user, onLogout }) {
+    return (
+      <div className="min-h-screen">
+        <nav className="sticky top-0 z-40 backdrop-blur-md bg-black/40 border-b border-white/6">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6">
+            <div className="flex items-center justify-between h-16">
+              <div className="flex items-center gap-4">
+                <div className="brand-icon nav-glow p-1" title="Entertainify">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="14" rx="2" fill="#0f172a"/><path d="M7 9h10" stroke="#7c3aed" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                </div>
+                <button onClick={() => navigate('/')} className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 to-pink-400">Entertainify</button>
+
+                <div className="hidden lg:flex items-center gap-6 ml-6">
+                  <button onClick={() => navigate('/')} className={`text-sm ${route==='/' ? 'text-white font-semibold' : 'text-gray-300 hover:text-white'}`}>Home</button>
+                  <button onClick={() => document.getElementById('trending')?.scrollIntoView({ behavior:'smooth' })} className="text-sm text-gray-300 hover:text-white">Trending</button>
+                  <button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior:'smooth' })} className="text-sm text-gray-300 hover:text-white">Catalog</button>
+                  <button onClick={() => document.getElementById('watchlist')?.scrollIntoView({ behavior:'smooth' })} className="text-sm text-gray-300 hover:text-white">Watchlist</button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="relative hidden md:block">
+                  <input className="bg-transparent border border-white/6 rounded-full px-4 py-2 w-72 focus-ring" placeholder="Search movies, series, actors..." onFocus={() => navigate('/')} />
+                  <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-300"><i className="fas fa-search"></i></span>
+                </div>
+
+                <button onClick={() => navigate('/premium')} className="hidden sm:inline-flex items-center gap-2 px-3 py-1 rounded-2xl text-sm accent nav-glow focus-ring">
+                  <i className="fas fa-gem"></i><span className="hidden md:inline">Premium</span>
+                </button>
+
+                {user ? (
+                  <>
+                    <div className="relative">
+                      <button className="flex items-center gap-2 p-2 rounded-full bg-white/6 focus-ring" onClick={() => navigate('/account')} title="Account">
+                        <i className="fas fa-user"></i>
+                      </button>
+                    </div>
+                    <div className="hidden sm:block text-sm text-gray-300">Hi, <strong>{user.username}</strong> <span className="text-xs text-indigo-300">({user.role || 'user'})</span></div>
+                    <button onClick={onLogout} className="px-3 py-1 rounded-2xl bg-white/6 hover:bg-white/8">Logout</button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => navigate('/login')} className="px-3 py-1 rounded-2xl bg-white/6 hover:bg-white/8">Login</button>
+                    <button onClick={() => navigate('/login')} className="px-3 py-1 rounded-2xl accent nav-glow">Register</button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        <main>
+          <div className="page show" style={{ paddingTop: 12 }}>
+            {children}
+          </div>
+        </main>
+
+        {/* PROFESSIONAL FOOTER */}
+        <footer className="mt-12 bg-gradient-to-t from-black/60 to-transparent text-gray-300">
+          <div className="max-w-7xl mx-auto px-6 py-12">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+              <div>
+                <div className="flex items-center gap-3">
+                  <div className="brand-icon p-2"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="14" rx="2" fill="#0f172a"/><path d="M7 9h10" stroke="#7c3aed" strokeWidth="1.6" strokeLinecap="round"/></svg></div>
+                  <div>
+                    <div className="font-bold text-white">Entertainify</div>
+                    <div className="text-sm text-gray-400">All your movies & series. One place. Demo.</div>
+                  </div>
+                </div>
+                <div className="mt-4 text-sm text-gray-400">
+                  Stream links redirect to official sources. This demo doesn't host videos — it helps you find titles and build watchlists.
+                </div>
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-3 text-white">Explore</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><a className="footer-link" href="#">Home</a></li>
+                  <li><a className="footer-link" href="#">Trending</a></li>
+                  <li><a className="footer-link" href="#">Catalog</a></li>
+                  <li><a className="footer-link" href="#">Premium</a></li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-3 text-white">Resources</h4>
+                <ul className="space-y-2 text-sm">
+                  <li><a className="footer-link" href="#">Help Center</a></li>
+                  <li><a className="footer-link" href="#">Privacy</a></li>
+                  <li><a className="footer-link" href="#">Terms of Use</a></li>
+                  <li><a className="footer-link" href="#">API / Developers</a></li>
+                </ul>
+              </div>
+
+              <div>
+                <h4 className="font-semibold mb-3 text-white">Connect</h4>
+                <div className="flex items-center gap-3 mb-3">
+                  <a className="p-2 rounded bg-white/6 hover:bg-white/10"><i className="fab fa-facebook-f"></i></a>
+                  <a className="p-2 rounded bg-white/6 hover:bg-white/10"><i className="fab fa-twitter"></i></a>
+                  <a className="p-2 rounded bg-white/6 hover:bg-white/10"><i className="fab fa-instagram"></i></a>
+                  <a className="p-2 rounded bg-white/6 hover:bg-white/10"><i className="fab fa-youtube"></i></a>
+                </div>
+
+                <div className="mt-2">
+                  <label className="text-sm text-gray-400">Language</label>
+                  <select className="w-full mt-2 bg-transparent border border-white/6 rounded px-3 py-2 focus-ring">
+                    <option>English</option>
+                    <option>বাংলা</option>
+                    <option>Español</option>
+                    <option>Français</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-8 border-t border-white/6 pt-6 flex flex-col md:flex-row justify-between items-center text-sm text-gray-500">
+              <div>© {new Date().getFullYear()} Entertainify — Demo. All rights reserved.</div>
+              <div className="mt-3 md:mt-0">Built with ❤️ · Not affiliated with Netflix / TMDB / IMDb</div>
+            </div>
+          </div>
+        </footer>
+      </div>
+    );
+  }
+
+  /* ------------------------
+     HOME
+     - replaces the hero background image with a Stranger Things promotional image
+     ------------------------ */
+  function HomePage({ user }) {
+    const initialCatalog = [
+      { id:1, title:"Oppenheimer", type:"movie", year:2023, rating:8.5, genres:["Drama","History"], cover:"https://picsum.photos/seed/oppenheimer/500/750" },
+      { id:2, title:"Dune: Part One", type:"movie", year:2021, rating:8.1, genres:["Sci-Fi","Adventure"], cover:"https://picsum.photos/seed/dune/500/750" },
+      { id:3, title:"The Last of Us", type:"series", year:2023, rating:9.0, genres:["Drama","Thriller"], cover:"https://picsum.photos/seed/lastofus/500/750" },
+      { id:4, title:"Stranger Things", type:"series", year:2016, rating:8.7, genres:["Sci-Fi","Horror"], cover:"https://picsum.photos/seed/strangerthings/500/750" },
+      { id:5, title:"Breaking Bad", type:"series", year:2008, rating:9.5, genres:["Crime","Drama"], cover:"https://picsum.photos/seed/breakingbad/500/750" },
+      { id:6, title:"Avatar: The Way of Water", type:"movie", year:2022, rating:7.7, genres:["Sci-Fi","Adventure"], cover:"https://picsum.photos/seed/avatar/500/750" },
+      { id:7, title:"Succession", type:"series", year:2018, rating:8.8, genres:["Drama"], cover:"https://picsum.photos/seed/succession/500/750" },
+      { id:8, title:"The Witcher", type:"series", year:2019, rating:7.9, genres:["Fantasy","Action"], cover:"https://picsum.photos/seed/witcher/500/750" }
+    ];
+
+    const [catalog] = useState(initialCatalog);
+    const [query, setQuery] = useState("");
+    const [genre, setGenre] = useState("All");
+    const [filterType, setFilterType] = useState("all");
+    const [watchlist, setWatchlist] = useState(() => {
+      try { const raw = localStorage.getItem("entertainify_watchlist"); return raw ? JSON.parse(raw) : []; } catch { return []; }
+    });
+    const [userPrefs, setUserPrefs] = useState(["Drama","Sci-Fi"]);
+    const [selected, setSelected] = useState(null);
+    const [showTop, setShowTop] = useState(false);
+    const heroRef = useRef(null);
+    const trendingRef = useRef(null);
+    const catalogRef = useRef(null);
+    const watchRef = useRef(null);
+
+    useEffect(() => { localStorage.setItem("entertainify_watchlist", JSON.stringify(watchlist)); }, [watchlist]);
+
+    const genres = ["All", ...new Set(catalog.flatMap(c => c.genres))];
+    function toggleWatchLocal(id) {
+      setWatchlist(prev => {
+        const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+        return next;
+      });
+    }
+    function matchesFilters(item) {
+      if (filterType !== "all" && item.type !== filterType) return false;
+      if (genre !== "All" && !item.genres.includes(genre)) return false;
+      if (query && !item.title.toLowerCase().includes(query.toLowerCase())) return false;
+      return true;
+    }
+    const trending = catalog.slice().sort((a,b) => b.rating - a.rating).slice(0,6);
+    const recommended = catalog.filter(c => c.genres.some(g => userPrefs.includes(g))).slice(0,6);
+    const filtered = catalog.filter(matchesFilters);
+
+    // PARALLAX: replaced background with Stranger Things promotional image (TMDB/hosted path)
+    // If you'd rather use a different poster, give me the URL.
+    useEffect(() => {
+      const layers = heroRef.current ? Array.from(heroRef.current.querySelectorAll('.parallax-layer')) : [];
+      let rafId = null;
+      function onScroll() {
+        if (!layers.length) return;
+        const scrolled = window.scrollY;
+        layers.forEach(layer => {
+          const speed = parseFloat(layer.dataset.speed || "0.2");
+          const y = scrolled * speed;
+          layer.style.transform = `translate3d(0, ${y}px, 0)`;
+        });
+      }
+      function loop() { onScroll(); rafId = requestAnimationFrame(loop); }
+      rafId = requestAnimationFrame(loop);
+      return () => cancelAnimationFrame(rafId);
+    }, []);
+
+    useEffect(() => {
+      function onScroll() { setShowTop(window.scrollY > 360); }
+      window.addEventListener('scroll', onScroll);
+      return () => window.removeEventListener('scroll', onScroll);
+    }, []);
+
+    // Stranger Things promotional poster (high-res). If your environment blocks it, you can replace with a local file path.
+    const strangerBg = "https://image.tmdb.org/t/p/w1280/56v2KjBlU4XaOv9rVYEQypROD7P.jpg";
+
+    return (
+      <div>
+        {/* HERO */}
+        <section id="hero" ref={heroRef} className="parallax-hero mb-6 relative">
+          <div className="parallax-layer" data-speed="0.03" style={{
+            backgroundImage: `linear-gradient(180deg, rgba(6,6,12,0.55), rgba(0,0,0,0.65)), url('${strangerBg}')`,
+            filter: "brightness(0.55) saturate(1.05) contrast(1.02)"
+          }} />
+
+          <div className="parallax-layer floaty" data-speed="-0.03" style={{
+            backgroundImage: "radial-gradient(circle at 20% 20%, rgba(124,58,237,0.10), transparent 15%), radial-gradient(circle at 80% 80%, rgba(236,72,153,0.08), transparent 18%)",
+            mixBlendMode: "screen"
+          }} />
+
+          <div className="parallax-layer" data-speed="0.12" style={{ zIndex: 10 }}>
+            <div className="max-w-7xl mx-auto h-full flex items-center px-4 sm:px-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full items-center">
+                <div className="md:col-span-2 space-y-4">
+                  <div className="glass p-5 sm:p-6 rounded-2xl shadow-2xl">
+                    <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold leading-tight">All your movies & series in <span className="text-indigo-300">ONE place</span>.</h1>
+                    <p className="mt-2 text-gray-300 max-w-xl">Discover trending titles, get personalized picks, build your watchlist and jump to where to watch. Clean design, fast browsing — optimized for all devices.</p>
+
+                    <div className="mt-4 flex gap-3 flex-wrap">
+                      <button onClick={() => document.getElementById('trending')?.scrollIntoView({ behavior:'smooth' })} className="accent px-4 py-2 rounded-2xl font-semibold shadow-lg focus-ring tooltip" data-tip="See what's hot now"><i className="fas fa-fire-alt mr-2"></i>Explore Trending</button>
+                      <button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior:'smooth' })} className="px-4 py-2 rounded-2xl bg-white/6 font-semibold hover:bg-white/8 transition focus-ring tooltip" data-tip="Browse the full catalog"><i className="fas fa-th-large mr-2"></i>Browse Catalog</button>
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {['Drama','Sci-Fi','Action','Comedy','Thriller'].map(g => (
+                        <button key={g} onClick={() => setUserPrefs(prev => prev.includes(g) ? prev.filter(p => p !== g) : [...prev,g])}
+                          className={`px-3 py-1 rounded-full text-sm border ${userPrefs.includes(g) ? 'bg-white/10 border-transparent' : 'bg-transparent border-white/8'}`}>
+                          {g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="hidden md:block">
+                  <div className="rounded-3xl overflow-hidden shadow-2xl border border-white/6 transform hover:scale-[1.02] transition">
+                    <img src={trending[0].cover} alt={trending[0].title} className="w-full h-80 object-cover"/>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* rest of the home (trending, recommended, catalog, watchlist) - kept unchanged */}
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 pb-12">
+          <section id="trending" className="mb-8">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-2xl font-bold">Trending now</h2>
+              <div className="text-sm text-gray-400">Updated • <span className="text-gray-300">{new Date().toLocaleDateString()}</span></div>
+            </div>
+
+            <div className="flex gap-4 overflow-x-auto pb-4 snap-x">
+              {trending.map((t, idx) => (
+                <article key={t.id} className="snap-start min-w-[160px] sm:min-w-[180px] anim-fade-up" style={{ animationDelay: `${idx*60}ms` }}>
+                  <div onClick={() => setSelected(t)} className="cursor-pointer rounded-xl overflow-hidden shadow-2xl transform hover:scale-105 transition" role="button" tabIndex={0}>
+                    <img src={t.cover} alt={t.title} className="w-40 sm:w-44 h-60 sm:h-64 object-cover"/>
+                  </div>
+                  <div className="mt-2 text-sm">
+                    <div className="font-semibold flex items-center gap-2">
+                      {t.title}
+                      <span className="text-xs bg-white/6 px-2 py-0.5 rounded text-gray-300">{t.year}</span>
+                    </div>
+                    <div className="text-xs text-gray-400">{t.genres.join(', ')}</div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section id="catalog">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="lg:col-span-2">
+                <h3 className="text-xl font-bold mb-3">Recommended for you</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                  {recommended.map((r, idx) => (
+                    <div key={r.id} className="rounded-lg overflow-hidden glass anim-fade-up" style={{ animationDelay: `${idx*50}ms` }}>
+                      <img onClick={() => setSelected(r)} src={r.cover} alt={r.title} className="w-full h-48 sm:h-56 object-cover cursor-pointer"/>
+                      <div className="p-2 flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold text-sm">{r.title}</div>
+                          <div className="text-xs text-gray-400">{r.genres.join(', ')}</div>
+                        </div>
+                        <button onClick={() => toggleWatchLocal(r.id)} className="text-xs px-2 py-1 rounded bg-white/6 hover:bg-white/8 transition focus-ring" aria-label={`Toggle ${r.title}`} title="Add to watchlist">
+                          <i className={`fa-fw ${watchlist.includes(r.id) ? 'fas fa-check' : 'fas fa-plus'}`}></i>
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <h3 className="text-xl font-bold my-4">Catalog</h3>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                  {filtered.map((c, idx) => (
+                    <div key={c.id} className="rounded-lg overflow-hidden relative glass anim-fade-up" style={{ animationDelay: `${idx*30}ms` }}>
+                      <img src={c.cover} alt={c.title} className="w-full h-48 sm:h-56 object-cover"/>
+                      <div className="p-2 bg-gradient-to-t from-black/60 absolute bottom-0 left-0 right-0">
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className="font-semibold text-sm">{c.title}</div>
+                            <div className="text-xs text-gray-400">{c.year}</div>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <button onClick={() => toggleWatchLocal(c.id)} className={`px-2 py-1 rounded text-xs font-medium ${watchlist.includes(c.id) ? 'bg-green-500' : 'bg-white/10'}`}>
+                              {watchlist.includes(c.id) ? <><i className="fas fa-check mr-1"></i>In</> : <><i className="fas fa-plus mr-1"></i>Add</>}
+                            </button>
+                            <button onClick={() => setSelected(c)} className="px-2 py-1 rounded bg-white/6 text-xs hover:bg-white/8 transition">Details</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <aside id="watchlist" ref={watchRef} className="bg-gradient-to-b from-white/3 to-white/4 rounded-xl p-4 glass">
+                <h4 className="font-bold">Your Watchlist <span className="text-sm text-gray-300">({watchlist.length})</span></h4>
+                <div className="mt-3 flex flex-col gap-2">
+                  {watchlist.length === 0 && <div className="text-gray-300 text-sm">Your watchlist is empty.</div>}
+                  {watchlist.map(id => {
+                    const it = catalog.find(c => c.id === id);
+                    return (
+                      <div key={id} className="flex items-center gap-3">
+                        <img src={it.cover} className="w-12 h-16 object-cover rounded"/>
+                        <div className="flex-1">
+                          <div className="font-semibold text-sm">{it.title}</div>
+                          <div className="text-xs text-gray-300">{it.year}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => setSelected(it)} className="text-xs px-2 py-1 bg-white/6 rounded focus-ring">Details</button>
+                          <button onClick={() => toggleWatchLocal(id)} className="text-xs px-2 py-1 bg-white/6 rounded focus-ring">Remove</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-6">
+                  <h5 className="font-semibold mb-2">Quick Picks</h5>
+                  <div className="flex flex-wrap gap-2">
+                    {['Top Rated','New Releases','For You'].map(t => <button key={t} className="px-3 py-1 bg-white/6 rounded text-sm hover:bg-white/8 transition">{t}</button>)}
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </section>
+        </main>
+
+        {selected && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" role="dialog" aria-modal="true">
+            <div className="bg-gradient-to-br from-white/5 to-white/3 rounded-2xl max-w-4xl w-full overflow-hidden shadow-2xl">
+              <div className="grid grid-cols-1 md:grid-cols-3">
+                <div className="md:col-span-1">
+                  <img src={selected.cover} alt={selected.title} className="w-full h-full object-cover"/>
+                </div>
+                <div className="p-6 md:col-span-2">
+                  <div className="flex justify-between">
+                    <div>
+                      <h2 className="text-2xl font-bold">{selected.title}</h2>
+                      <div className="text-sm text-gray-300">{selected.year} • {selected.genres.join(', ')} • {selected.type}</div>
+                    </div>
+                    <div><button onClick={() => setSelected(null)} className="text-gray-300 focus-ring">Close</button></div>
+                  </div>
+
+                  <p className="mt-4 text-gray-300">Rating: {selected.rating} / 10</p>
+
+                  <div className="mt-6 flex gap-3">
+                    <a href={`https://www.google.com/search?q=watch+${encodeURIComponent(selected.title)}+free`} target="_blank" rel="noreferrer" className="px-4 py-2 accent rounded-2xl font-semibold"><i className="fas fa-play mr-2"></i>Find where to watch</a>
+                    <button onClick={() => { const wl = JSON.parse(localStorage.getItem('entertainify_watchlist')||'[]'); if(wl.includes(selected.id)) { localStorage.setItem('entertainify_watchlist', JSON.stringify(wl.filter(x=>x!==selected.id))); } else { localStorage.setItem('entertainify_watchlist', JSON.stringify([...wl, selected.id])); } window.location.reload(); }} className="px-4 py-2 bg-white/6 rounded-2xl">
+                      Add to Watchlist
+                    </button>
+                  </div>
+
+                  <div className="mt-6 text-sm text-gray-400"><strong>About:</strong> Demo description — replace with TMDB/OMDB synopsis later.</div>
+
+                  <div className="mt-6">
+                    <strong>External links</strong>
+                    <div className="mt-2 flex gap-2">
+                      <a href={`https://www.imdb.com/find?q=${encodeURIComponent(selected.title)}`} target="_blank" rel="noreferrer" className="text-xs bg-white/6 px-3 py-1 rounded">IMDB</a>
+                      <a href={`https://www.justwatch.com/search?q=${encodeURIComponent(selected.title)}`} target="_blank" rel="noreferrer" className="text-xs bg-white/6 px-3 py-1 rounded">JustWatch</a>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ------------------------
+     LOGIN / REGISTER page
+     ------------------------ */
+  function LoginPage({ onLogin, onRegister, navigate }) {
+    const [mode, setMode] = useState('login');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [msg, setMsg] = useState('');
+
+    async function submit() {
+      setBusy(true);
+      setMsg('');
+      if (mode === 'login') {
+        const res = await onLogin(username.trim(), password);
+        if (res.ok) { setBusy(false); setMsg('Signed in — redirecting...'); setTimeout(()=>navigate('/'),700); return; }
+        setMsg(res.error || 'Login failed');
+      } else {
+        const res = await onRegister(username.trim(), password);
+        if (res.ok) { setBusy(false); setMsg('Account created — redirecting...'); setTimeout(()=>navigate('/'),700); return; }
+        setMsg(res.error || 'Register failed');
+      }
+      setBusy(false);
+    }
+
+    return (
+      <div className="min-h-[72vh] flex items-center justify-center px-4 py-12">
+        <div className="max-w-4xl w-full grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
+          <div className="hidden md:flex flex-col justify-center glass p-8 rounded-2xl">
+            <h2 className="text-3xl font-extrabold mb-3">Welcome to Entertainify</h2>
+            <p className="text-gray-300 mb-6">Sign in to get personalized recommendations, save watchlists, and access Premium features — all in a beautiful interface.</p>
+            <ul className="space-y-3 text-gray-300">
+              <li className="flex items-center gap-3"><i className="fas fa-check-circle text-indigo-400"></i> Personalized picks</li>
+              <li className="flex items-center gap-3"><i className="fas fa-film text-indigo-400"></i> Seamless browsing</li>
+              <li className="flex items-center gap-3"><i className="fas fa-shield-alt text-indigo-400"></i> Secure authentication (demo)</li>
+            </ul>
+            <div className="mt-8">
+              <button onClick={() => setMode('register')} className="px-4 py-2 accent rounded-2xl">Create account</button>
+            </div>
+          </div>
+
+          <div className="glass p-6 rounded-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-semibold">{mode === 'login' ? 'Sign in to your account' : 'Create your account'}</h3>
+              <div className="text-sm text-gray-400">{mode === 'login' ? 'New here?' : 'Already have an account?'}</div>
+            </div>
+
+            <div className="space-y-3">
+              <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full px-4 py-2 rounded focus-ring bg-transparent border border-white/6" />
+              <input value={password} onChange={e=>setPassword(e.target.value)} type="password" placeholder="Password" className="w-full px-4 py-2 rounded focus-ring bg-transparent border border-white/6" />
+              <div className="flex items-center justify-between">
+                <div className="flex gap-2">
+                  <button onClick={() => { setMode('login'); }} className={`px-3 py-1 rounded ${mode==='login' ? 'bg-indigo-600 text-white' : 'bg-white/6'}`}>Login</button>
+                  <button onClick={() => { setMode('register'); }} className={`px-3 py-1 rounded ${mode==='register' ? 'bg-indigo-600 text-white' : 'bg-white/6'}`}>Register</button>
+                </div>
+                <button onClick={submit} disabled={busy} className="px-4 py-2 rounded-2xl accent">
+                  {busy ? 'Working...' : (mode==='login' ? 'Sign in' : 'Create account')}
+                </button>
+              </div>
+
+              <div className="text-sm text-gray-400">{msg}</div>
+
+              <div className="mt-4">
+                <div className="text-xs text-gray-300 mb-2">Quick demo logins</div>
+                <div className="flex gap-2">
+                  <button onClick={() => { setUsername('admin'); setPassword('adminpass'); setMode('login'); }} className="px-3 py-1 rounded bg-white/6">Use admin</button>
+                  <button onClick={() => { setUsername('demo'); setPassword('userpass'); setMode('login'); }} className="px-3 py-1 rounded bg-white/6">Use demo</button>
+                </div>
+              </div>
+
+              <div className="mt-6 text-xs text-gray-400">Note: this demo will try your local backend at <code>http://localhost:4000</code>. If backend isn't running it falls back to local demo auth so UI still works.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /* ------------------------
+     PREMIUM & ACCOUNT pages (kept from earlier)
+     ------------------------ */
+  function PremiumPage({ user }) {
+    return (
+      <div className="min-h-[72vh] px-4 py-8">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+          <div className="space-y-6">
+            <h1 className="text-4xl font-extrabold">Entertainify <span className="text-indigo-300">Premium</span></h1>
+            <p className="text-gray-300">Upgrade to Premium for exclusive features: offline lists, curated playlists, early access to new releases, and an ad-free browsing experience. Beautiful UI, professional controls, and priority support.</p>
+
+            <div className="flex gap-3">
+              <button className="accent px-5 py-3 rounded-2xl text-lg shadow-lg hover:scale-[1.02] transition focus-ring">
+                Get Premium
+              </button>
+              <button className="px-5 py-3 rounded-2xl bg-white/6 hover:bg-white/8 transition focus-ring">
+                Learn more
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Feature icon="fas fa-download" title="Offline Lists" text="Save titles for offline viewing and access your watchlist anywhere." />
+              <Feature icon="fas fa-star" title="Curated Picks" text="Hand-picked suggestions by editors and machine learning models." />
+              <Feature icon="fas fa-bolt" title="Priority Access" text="Early previews and limited events for premium members." />
+              <Feature icon="fas fa-user-shield" title="Premium Support" text="Fast human support for account and playback issues." />
+            </div>
+          </div>
+
+          <div className="glass rounded-2xl p-6 shadow-2xl">
+            <div className="text-sm text-gray-300 mb-4">Pricing</div>
+            <div className="bg-gradient-to-r from-indigo-700 to-pink-600 p-6 rounded-2xl text-white">
+              <div className="flex items-end justify-between">
+                <div>
+                  <div className="text-3xl font-bold">$4.99</div>
+                  <div className="text-xs">per month</div>
+                </div>
+                <div>
+                  <button className="bg-white/10 px-4 py-2 rounded-2xl">Start free trial</button>
+                </div>
+              </div>
+              <div className="mt-4 text-sm">Inclusive of all premium features. Cancel anytime.</div>
+            </div>
+
+            <div className="mt-6">
+              <h4 className="font-semibold mb-2">What you get</h4>
+              <ul className="text-gray-300 space-y-2">
+                <li><i className="fas fa-check mr-2 text-indigo-400"></i> Ad-free browsing</li>
+                <li><i className="fas fa-check mr-2 text-indigo-400"></i> Offline lists</li>
+                <li><i className="fas fa-check mr-2 text-indigo-400"></i> Priority support</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function Feature({ icon, title, text }) {
+    return (
+      <div className="p-4 glass rounded-lg hover:shadow-lg transition">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-full bg-white/6"><i className={`${icon} text-indigo-300`}></i></div>
+          <div>
+            <div className="font-semibold">{title}</div>
+            <div className="text-sm text-gray-300">{text}</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function AccountPage({ user }) {
+    const [watch, setWatch] = useState([]);
+    useEffect(() => {
+      async function fetchWL() {
+        const token = localStorage.getItem('ent_token');
+        try {
+          const res = await fetch(API_BASE + '/api/watchlist', { headers: { Authorization: token ? 'Bearer ' + token : '' }});
+          const json = await res.json();
+          if (Array.isArray(json)) {
+            setWatch(json);
+            return;
+          }
+        } catch (e) {}
+        const wl = JSON.parse(localStorage.getItem('entertainify_watchlist') || '[]');
+        const demoCatalog = [
+          { id:1, title:"Oppenheimer" }, { id:2, title:"Dune: Part One" }, { id:3, title:"The Last of Us" }
+        ];
+        setWatch(wl.map(id => demoCatalog.find(x=>x.id===id) || { id, title: 'Item ' + id }));
+      }
+      fetchWL();
+    }, []);
+
+    return (
+      <div className="min-h-[60vh] px-4 py-8">
+        <div className="max-w-4xl mx-auto">
+          <div className="glass p-6 rounded-2xl mb-6">
+            <h2 className="text-xl font-bold">My Account</h2>
+            <div className="text-gray-300 mt-2">Username: <strong>{user?.username}</strong></div>
+            <div className="text-gray-300">Role: <strong>{user?.role || 'user'}</strong></div>
+          </div>
+
+          <div className="glass p-6 rounded-2xl">
+            <h3 className="font-bold mb-3">My Watchlist</h3>
+            {watch.length === 0 ? <div className="text-gray-300">No saved items.</div> : (
+              <div className="space-y-2">
+                {watch.map(w => <div key={w.id} className="p-2 rounded bg-white/6 flex justify-between items-center">{w.title}<button className="px-2 py-1 rounded bg-white/8">Remove</button></div>)}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(AppRoot));
+  </script>
+</body>
+</html>
